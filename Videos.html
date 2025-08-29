@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VideoStream</title>
+    <!-- Use Inter font from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Load Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+
+    <!-- Main Container -->
+    <div id="app" class="container mx-auto">
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-center bg-white p-4 md:p-6 rounded-2xl shadow-lg mb-8">
+            <h1 class="text-3xl md:text-4xl font-extrabold text-indigo-700">VideoStream</h1>
+            <div class="flex items-center space-x-2 mt-4 md:mt-0 text-sm md:text-base">
+                <span class="font-medium text-gray-600">User ID:</span>
+                <span id="user-id" class="font-semibold text-gray-800 break-all">Loading...</span>
+            </div>
+        </header>
+
+        <!-- Video Upload Form Section -->
+        <section class="bg-white p-6 md:p-8 rounded-2xl shadow-lg mb-8">
+            <h2 class="text-xl md:text-2xl font-bold text-gray-800 mb-4">Upload a New Video</h2>
+            <form id="upload-form" class="space-y-4">
+                <div class="flex flex-col">
+                    <label for="video-title" class="text-sm font-medium text-gray-700 mb-1">Video Title</label>
+                    <input type="text" id="video-title" placeholder="A stunning video title" required
+                        class="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+                </div>
+                <div class="flex flex-col">
+                    <label for="video-url" class="text-sm font-medium text-gray-700 mb-1">Video URL (or thumbnail placeholder)</label>
+                    <input type="url" id="video-url" placeholder="https://example.com/video.mp4"
+                        class="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors">
+                </div>
+                <button type="submit" id="upload-button"
+                    class="w-full bg-indigo-600 text-white font-semibold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-200 shadow-md">
+                    Upload Video
+                </button>
+            </form>
+        </section>
+
+        <!-- Video List Section -->
+        <section class="bg-white p-6 md:p-8 rounded-2xl shadow-lg">
+            <h2 class="text-xl md:text-2xl font-bold text-gray-800 mb-6">Recent Videos</h2>
+            <div id="video-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Video cards will be dynamically inserted here -->
+                <p id="loading-message" class="text-center text-gray-500 col-span-full">Loading videos...</p>
+            </div>
+        </section>
+    </div>
+
+    <!-- Firebase SDK Scripts -->
+    <script type="module">
+        // Firebase Core and Firestore modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase configuration from the environment
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        } catch (error) {
+            console.error("Firebase initialization failed:", error);
+            document.getElementById('loading-message').textContent = 'Error: Failed to connect to database.';
+        }
+
+        const userIdEl = document.getElementById('user-id');
+        const videoListEl = document.getElementById('video-list');
+        const uploadFormEl = document.getElementById('upload-form');
+        const loadingMessageEl = document.getElementById('loading-message');
+
+        // User authentication and setup
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                userIdEl.textContent = userId;
+                console.log("User authenticated:", userId);
+
+                // Setup real-time listener for videos after auth
+                setupFirestoreListener();
+            } else {
+                console.log("No user signed in. Attempting sign-in...");
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        console.log("Signed in with custom token.");
+                    } else {
+                        await signInAnonymously(auth);
+                        console.log("Signed in anonymously.");
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth failed:", error);
+                    userIdEl.textContent = 'Auth Error';
+                }
+            }
+        });
+
+        // Function to create a video card element
+        function createVideoCard(video) {
+            // Use a placeholder image if no URL is provided
+            const thumbnailUrl = video.url || `https://placehold.co/500x300/e5e7eb/4b5563?text=Video+Loading`;
+            
+            const card = document.createElement('div');
+            card.className = 'bg-white rounded-xl shadow-md overflow-hidden transform transition-all hover:scale-[1.02] duration-200';
+            card.innerHTML = `
+                <div class="w-full h-48 sm:h-56 bg-gray-200">
+                    <img src="${thumbnailUrl}" onerror="this.onerror=null; this.src='https://placehold.co/500x300/e5e7eb/4b5563?text=Video+Not+Found'" alt="Video Thumbnail" class="w-full h-full object-cover">
+                </div>
+                <div class="p-4">
+                    <h3 class="font-bold text-gray-900 text-lg mb-1 truncate">${video.title || 'Untitled Video'}</h3>
+                    <p class="text-sm text-gray-600 truncate">Uploader: ${video.uploaderId || 'Unknown'}</p>
+                </div>
+            `;
+            return card;
+        }
+
+        // Real-time Firestore listener
+        function setupFirestoreListener() {
+            // Collection path must follow the public data schema
+            const videosColRef = collection(db, `artifacts/${appId}/public/data/videos`);
+            const q = query(videosColRef);
+
+            onSnapshot(q, (snapshot) => {
+                loadingMessageEl.style.display = 'none'; // Hide loading message
+                videoListEl.innerHTML = ''; // Clear previous videos
+
+                if (snapshot.empty) {
+                    videoListEl.innerHTML = '<p class="text-center text-gray-500 col-span-full">No videos uploaded yet. Be the first!</p>';
+                    return;
+                }
+
+                const videos = [];
+                snapshot.forEach(doc => {
+                    videos.push({ id: doc.id, ...doc.data() });
+                });
+
+                // Sort videos by timestamp (newest first)
+                videos.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
+
+                videos.forEach(video => {
+                    videoListEl.appendChild(createVideoCard(video));
+                });
+
+                console.log("Videos updated in real-time.");
+
+            }, (error) => {
+                console.error("Error listening to Firestore updates:", error);
+                videoListEl.innerHTML = '<p class="text-center text-red-500 col-span-full">Error loading videos. Please try again.</p>';
+            });
+        }
+
+        // Handle video upload form submission
+        uploadFormEl.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const titleInput = document.getElementById('video-title');
+            const urlInput = document.getElementById('video-url');
+            
+            if (!userId) {
+                console.error("User not authenticated. Cannot upload video.");
+                // Provide visual feedback to the user without using alert()
+                const uploadBtn = document.getElementById('upload-button');
+                uploadBtn.textContent = 'Auth Error! Try again.';
+                uploadBtn.classList.add('bg-red-500');
+                setTimeout(() => {
+                    uploadBtn.textContent = 'Upload Video';
+                    uploadBtn.classList.remove('bg-red-500');
+                }, 3000);
+                return;
+            }
+
+            const videoData = {
+                title: titleInput.value.trim(),
+                url: urlInput.value.trim() || `https://placehold.co/500x300/e5e7eb/4b5563?text=${encodeURIComponent(titleInput.value.trim().substring(0, 15))}`,
+                uploaderId: userId,
+                timestamp: serverTimestamp()
+            };
+
+            const videosColRef = collection(db, `artifacts/${appId}/public/data/videos`);
+
+            try {
+                const docRef = await addDoc(videosColRef, videoData);
+                console.log("Document written with ID: ", docRef.id);
+                // Clear form inputs
+                titleInput.value = '';
+                urlInput.value = '';
+            } catch (error) {
+                console.error("Error adding document: ", error);
+            }
+        });
+
+    </script>
+</body>
+              </html>
+  
